@@ -56,7 +56,7 @@ namespace CreationModelPlugin
             Transaction transaction = new Transaction(document, "Построение стен");
             transaction.Start();
 
-            for (int i = 0; i < 4; i++)
+            for (int i = 0; i < points.Count - 1; i++)
             {
                 Line line = Line.CreateBound(points[i], points[i + 1]);
                 Wall wall = Wall.Create(document, line, baseLevel.Id, false);
