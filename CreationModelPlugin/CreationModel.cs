@@ -1,6 +1,7 @@
 ﻿using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Architecture;
+using Autodesk.Revit.DB.Structure;
 using Autodesk.Revit.UI;
 using Autodesk.Revit.UI.Selection;
 using System;
@@ -16,19 +17,53 @@ namespace CreationModelPlugin
     {
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {
-
             Document doc = commandData.Application.ActiveUIDocument.Document;
             Level level1;
             Level level2;
 
             GetTwoLowerLevels(doc, "Уровень", out level1, out level2);
 
-            DrawRectangularOutlineWalls(doc, 10000, 5000, level1, level2);
+            Transaction transaction = new Transaction(doc, "Построение стен");
+            transaction.Start();
+
+            List<Wall> walls = DrawRectangularOutlineWalls(doc, 10000, 5000, level1, level2);
+
+            for (int i = 0; i < walls.Count; i++)
+            {
+                AddDoorOrWindow(doc, level1, walls[i], i == 0);
+            }
+
+            transaction.Commit();
 
             return Result.Succeeded;
         }
 
-        private static void GetTwoLowerLevels(Document document, string levelBaseName, 
+        private void AddDoorOrWindow(Document document, Level level, Wall wall, bool isDoor)
+        {
+            BuiltInCategory category = isDoor ? BuiltInCategory.OST_Doors : BuiltInCategory.OST_Windows;
+            string name = isDoor ? "0915 x 2134 мм" : "0915 x 1220 мм";
+            string familyName = isDoor ? "Одиночные-Щитовые" : "Фиксированные";
+            double sillHeight = isDoor ? 0 : UnitUtils.ConvertToInternalUnits(800, UnitTypeId.Millimeters);
+
+            FamilySymbol type = new FilteredElementCollector(document)
+                .OfClass(typeof(FamilySymbol))
+                .OfCategory(category)
+                .OfType<FamilySymbol>()
+                .Where(x => x.Name.Equals(name))
+                .Where(x => x.FamilyName.Equals(familyName))
+                .FirstOrDefault();
+
+            LocationCurve hostCurve = wall.Location as LocationCurve;
+            XYZ point = (hostCurve.Curve.GetEndPoint(0) + hostCurve.Curve.GetEndPoint(1)) / 2;
+
+            if (!type.IsActive)
+                type.Activate();
+
+            FamilyInstance opening = document.Create.NewFamilyInstance(point, type, wall, level, StructuralType.NonStructural);
+            opening.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM).Set(sillHeight);
+        }
+
+        private static void GetTwoLowerLevels(Document document, string levelBaseName,
             out Level level1, out Level level2)
         {
             List<Level> levels = new FilteredElementCollector(document)
@@ -45,16 +80,13 @@ namespace CreationModelPlugin
                 .FirstOrDefault();
         }
 
-        private static List<Wall> DrawRectangularOutlineWalls(Document document, double lengthInMm, double widthInMm, 
+        private static List<Wall> DrawRectangularOutlineWalls(Document document, double lengthInMm, double widthInMm,
             Level baseLevel, Level upperLevel)
         {
 
-            List<XYZ> points = GetRectangularPoints (lengthInMm, widthInMm);
+            List<XYZ> points = GetRectangularPoints(lengthInMm, widthInMm);
 
             List<Wall> walls = new List<Wall>();
-
-            Transaction transaction = new Transaction(document, "Построение стен");
-            transaction.Start();
 
             for (int i = 0; i < points.Count - 1; i++)
             {
@@ -63,8 +95,6 @@ namespace CreationModelPlugin
                 walls.Add(wall);
                 wall.get_Parameter(BuiltInParameter.WALL_HEIGHT_TYPE).Set(upperLevel.Id);
             }
-
-            transaction.Commit();
 
             return walls;
         }
