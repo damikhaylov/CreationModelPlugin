@@ -34,14 +34,14 @@ namespace CreationModelPlugin
                 AddDoorOrWindow(doc, level1, walls[i], i == 0);
             }
 
-            AddRoof(doc, level2, walls);
+            AddRoof(doc, level2, walls, 1500);
 
             transaction.Commit();
 
             return Result.Succeeded;
         }
 
-        private void AddRoof(Document document, Level level, List<Wall> walls)
+        private void AddRoof(Document document, Level level, List<Wall> walls, double rootHeightInMm)
         {
             RoofType roofType = new FilteredElementCollector(document)
                 .OfClass(typeof(RoofType))
@@ -50,35 +50,42 @@ namespace CreationModelPlugin
                 .Where(x => x.FamilyName.Equals("Базовая крыша"))
                 .FirstOrDefault();
 
-            double dt = walls[0].Width / 2;
+            double roofHeight = UnitUtils.ConvertToInternalUnits(rootHeightInMm, UnitTypeId.Millimeters);
+            double roofThickness = roofType.get_Parameter(BuiltInParameter.ROOF_ATTR_DEFAULT_THICKNESS_PARAM).AsDouble();
 
+            double dt = walls[0].Width / 2;
             List<XYZ> points = new List<XYZ>();
             points.Add(new XYZ(-dt, -dt, 0));
             points.Add(new XYZ(dt, -dt, 0));
             points.Add(new XYZ(dt, dt, 0));
             points.Add(new XYZ(-dt, dt, 0));
-            points.Add(new XYZ(-dt, -dt, 0));
 
+            LocationCurve roofExtrusionDirection = walls[0].Location as LocationCurve;
+            double extrusionStart = roofExtrusionDirection.Curve.GetEndPoint(0).X - dt;
+            double extrusionEnd = roofExtrusionDirection.Curve.GetEndPoint(1).X + dt;
 
-            Application application = document.Application;
-            CurveArray footprint = application.Create.NewCurveArray();
+            LocationCurve roofProfileCurve = walls[1].Location as LocationCurve;
+            double roofAngle = Math.Atan2(roofHeight, roofProfileCurve.Curve.Length / 2);
+            double roofElevation = roofThickness / Math.Cos(roofAngle);
 
-            for (int i = 0; i < walls.Count; i++)
-            {
-                LocationCurve curve = walls[i].Location as LocationCurve;
-                XYZ p1 = curve.Curve.GetEndPoint(0);
-                XYZ p2 = curve.Curve.GetEndPoint(1);
-                Line line = Line.CreateBound(p1 + points[i], p2 + points[i + 1]);
-                footprint.Append(line);
-            }
-            ModelCurveArray footPrintToModelCurveMapping = new ModelCurveArray();
-            FootPrintRoof footprintroof = document.Create.NewFootPrintRoof(footprint, level, roofType, out footPrintToModelCurveMapping);
+            XYZ roofProfileCorner1 = roofProfileCurve.Curve.GetEndPoint(0);
+            roofProfileCorner1 = new XYZ ( roofProfileCorner1.X, 
+                roofProfileCorner1.Y - dt, 
+                roofProfileCorner1.Z + level.Elevation + roofElevation);
+            XYZ roofProfileCorner2 = roofProfileCurve.Curve.GetEndPoint(1);
+            roofProfileCorner2 = new XYZ(roofProfileCorner2.X, 
+                roofProfileCorner2.Y + dt, 
+                roofProfileCorner2.Z + level.Elevation + roofElevation);
+            XYZ roofProfileRidgePoint = (roofProfileCorner1 + roofProfileCorner2) / 2;
+            roofProfileRidgePoint = new XYZ(roofProfileRidgePoint.X, roofProfileRidgePoint.Y,
+                roofProfileRidgePoint.Z + roofHeight);
 
-            foreach (ModelCurve m in footPrintToModelCurveMapping)
-            {
-                footprintroof.set_DefinesSlope(m, true);
-                footprintroof.set_SlopeAngle(m, 0.5);
-            }
+            CurveArray curveArray = new CurveArray();
+            curveArray.Append(Line.CreateBound(roofProfileCorner1, roofProfileRidgePoint));
+            curveArray.Append(Line.CreateBound(roofProfileRidgePoint, roofProfileCorner2));
+
+            ReferencePlane plane = document.Create.NewReferencePlane(new XYZ(0, 0, 0), new XYZ(0, 0, 1), new XYZ(0, 1, 0), document.ActiveView);
+            document.Create.NewExtrusionRoof(curveArray, plane, level, roofType, extrusionStart, extrusionEnd);
         }
 
         private void AddDoorOrWindow(Document document, Level level, Wall wall, bool isDoor)
