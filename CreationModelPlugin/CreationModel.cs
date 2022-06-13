@@ -1,4 +1,5 @@
-﻿using Autodesk.Revit.Attributes;
+﻿using Autodesk.Revit.ApplicationServices;
+using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Architecture;
 using Autodesk.Revit.DB.Structure;
@@ -33,9 +34,51 @@ namespace CreationModelPlugin
                 AddDoorOrWindow(doc, level1, walls[i], i == 0);
             }
 
+            AddRoof(doc, level2, walls);
+
             transaction.Commit();
 
             return Result.Succeeded;
+        }
+
+        private void AddRoof(Document document, Level level, List<Wall> walls)
+        {
+            RoofType roofType = new FilteredElementCollector(document)
+                .OfClass(typeof(RoofType))
+                .OfType<RoofType>()
+                .Where(x => x.Name.Equals("Типовой - 400мм"))
+                .Where(x => x.FamilyName.Equals("Базовая крыша"))
+                .FirstOrDefault();
+
+            double dt = walls[0].Width / 2;
+
+            List<XYZ> points = new List<XYZ>();
+            points.Add(new XYZ(-dt, -dt, 0));
+            points.Add(new XYZ(dt, -dt, 0));
+            points.Add(new XYZ(dt, dt, 0));
+            points.Add(new XYZ(-dt, dt, 0));
+            points.Add(new XYZ(-dt, -dt, 0));
+
+
+            Application application = document.Application;
+            CurveArray footprint = application.Create.NewCurveArray();
+
+            for (int i = 0; i < walls.Count; i++)
+            {
+                LocationCurve curve = walls[i].Location as LocationCurve;
+                XYZ p1 = curve.Curve.GetEndPoint(0);
+                XYZ p2 = curve.Curve.GetEndPoint(1);
+                Line line = Line.CreateBound(p1 + points[i], p2 + points[i + 1]);
+                footprint.Append(line);
+            }
+            ModelCurveArray footPrintToModelCurveMapping = new ModelCurveArray();
+            FootPrintRoof footprintroof = document.Create.NewFootPrintRoof(footprint, level, roofType, out footPrintToModelCurveMapping);
+
+            foreach (ModelCurve m in footPrintToModelCurveMapping)
+            {
+                footprintroof.set_DefinesSlope(m, true);
+                footprintroof.set_SlopeAngle(m, 0.5);
+            }
         }
 
         private void AddDoorOrWindow(Document document, Level level, Wall wall, bool isDoor)
